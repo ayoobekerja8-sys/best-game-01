@@ -1,141 +1,23 @@
-// Drawing only: the world's state and the current screen in, pixels out. The 1280x720 playfield
-// is scaled to fit the window and centred, the margin filled with the backdrop colour. Flat
-// rectangles and circles, canvas text for the HUD and the panels. Text that holds a number is
-// rebuilt only when the number changes, so a frame allocates nothing.
-import { FIELD, FONT, LIVES, PALETTE } from './config.js';
-import { KIND_COIN } from './world.js';
-
-export const SCREEN_TITLE = 'title';
-export const SCREEN_PLAY = 'play';
-export const SCREEN_PAUSED = 'paused';
-export const SCREEN_OVER = 'over';
-
-/** The panel's width; its height grows with its lines: room for the title, the lines and the prompt. */
-const PANEL = { width: 600, top: 134, line: 34, bottom: 70 };
-const LIFE_SIZE = 20;
-const LIFE_GAP = 8;
-
-function cachedLabel(prefix) {
-  let value = -1;
-  let text = '';
-  return function label(next) {
-    if (next !== value) {
-      value = next;
-      text = prefix + next;
-    }
-    return text;
-  };
-}
-
-export function createRenderer(canvas) {
-  const context = canvas.getContext('2d');
-  const view = { scale: 1, x: 0, y: 0 };
-  const scoreLabel = cachedLabel('Score ');
-  const levelLabel = cachedLabel('Level ');
-  const finalLabel = cachedLabel('Score ');
-  const bestLabel = cachedLabel('Best ');
-
-  function resize() {
-    const ratio = window.devicePixelRatio || 1;
-    const width = Math.round(window.innerWidth * ratio);
-    const height = Math.round(window.innerHeight * ratio);
-    canvas.width = width;
-    canvas.height = height;
-    view.scale = Math.min(width / FIELD.width, height / FIELD.height);
-    view.x = (width - FIELD.width * view.scale) / 2;
-    view.y = (height - FIELD.height * view.scale) / 2;
-  }
-
-  const fonts = new Map();
-  function text(value, x, y, size, color, align) {
-    if (!fonts.has(size)) fonts.set(size, `${size}px ${FONT}`);
-    context.font = fonts.get(size);
-    context.fillStyle = color;
-    context.textAlign = align;
-    context.fillText(value, x, y);
-  }
-
-  function drawField(state) {
-    context.fillStyle = PALETTE.sky;
-    context.fillRect(0, 0, FIELD.width, FIELD.height);
-    context.fillStyle = PALETTE.ground;
-    context.fillRect(0, FIELD.groundY, FIELD.width, FIELD.height - FIELD.groundY);
-
-    const items = state.items;
-    for (let index = 0; index < items.length; index += 1) {
-      const item = items[index];
-      if (!item.active) continue;
-      if (item.kind === KIND_COIN) {
-        context.fillStyle = PALETTE.coin;
-        context.beginPath();
-        context.arc(item.x + item.width / 2, item.y + item.height / 2, item.width / 2, 0, Math.PI * 2);
-        context.fill();
-      } else {
-        context.fillStyle = PALETTE.block;
-        context.fillRect(item.x, item.y, item.width, item.height);
-      }
-    }
-
-    const player = state.player;
-    // Blink while invulnerable after a hit: hidden on every other tenth of a second.
-    if (player.invulnerable === 0 || Math.floor(player.invulnerable * 10) % 2 === 1) {
-      context.fillStyle = PALETTE.player;
-      context.fillRect(player.x, player.y, player.width, player.height);
-    }
-  }
-
-  function drawHud(state) {
-    context.textBaseline = 'top';
-    text(scoreLabel(state.score), 24, 20, 28, PALETTE.text, 'left');
-    text(levelLabel(state.level), FIELD.width / 2, 20, 28, PALETTE.text, 'center');
-    const firstLife = FIELD.width - 24 - LIVES * (LIFE_SIZE + LIFE_GAP) + LIFE_GAP;
-    text('Lives', firstLife - 12, 20, 28, PALETTE.text, 'right');
-    for (let life = 0; life < LIVES; life += 1) {
-      context.fillStyle = life < state.lives ? PALETTE.player : PALETTE.ground;
-      context.fillRect(firstLife + life * (LIFE_SIZE + LIFE_GAP), 24, LIFE_SIZE, LIFE_SIZE);
-    }
-  }
-
-  function drawPanel(title, lines, prompt) {
-    const height = PANEL.top + lines.length * PANEL.line + PANEL.bottom;
-    const x = (FIELD.width - PANEL.width) / 2;
-    const y = (FIELD.height - height) / 2;
-    context.fillStyle = PALETTE.panel;
-    context.fillRect(x, y, PANEL.width, height);
-    context.textBaseline = 'alphabetic';
-    text(title, FIELD.width / 2, y + 78, 48, PALETTE.text, 'center');
-    for (let index = 0; index < lines.length; index += 1) {
-      text(lines[index], FIELD.width / 2, y + PANEL.top + index * PANEL.line, 22, PALETTE.muted, 'center');
-    }
-    text(prompt, FIELD.width / 2, y + height - 40, 24, PALETTE.coin, 'center');
-  }
-
-  const TITLE_LINES = ['Dodge the red blocks. Catch the gold coins.', 'Move with ← → or A D.  Pause with P.', ''];
-  const PAUSED_LINES = ['The blocks will wait for you.'];
-  const OVER_LINES = ['', ''];
-
-  /** Paint one frame: the field, then the HUD or a panel for the screen the game is on. */
-  function draw(state, screen, best) {
-    context.setTransform(1, 0, 0, 1, 0, 0);
-    context.fillStyle = PALETTE.backdrop;
-    context.fillRect(0, 0, canvas.width, canvas.height);
-    context.setTransform(view.scale, 0, 0, view.scale, view.x, view.y);
-    drawField(state);
-    if (screen === SCREEN_TITLE) {
-      TITLE_LINES[2] = bestLabel(best);
-      drawPanel('Block Dodger', TITLE_LINES, 'Press Space or click to start');
-      return;
-    }
-    drawHud(state);
-    if (screen === SCREEN_PAUSED) drawPanel('Paused', PAUSED_LINES, 'Press P to resume');
-    else if (screen === SCREEN_OVER) {
-      OVER_LINES[0] = finalLabel(state.score);
-      OVER_LINES[1] = bestLabel(best);
-      drawPanel('Game over', OVER_LINES, 'Press Space or click to play again');
-    }
-  }
-
-  resize();
-  window.addEventListener('resize', resize);
-  return { draw };
-}
+import {FIELD,PALETTE,FONT} from './config.js';
+export const SCREEN_TITLE='title',SCREEN_PLAY='play',SCREEN_DRAFT='draft',SCREEN_PAUSED='paused',SCREEN_OVER='over',SCREEN_VICTORY='victory';
+const UPGRADE_GLYPHS=['✦','↯','⑂','➤','➟','♥','◉','✹','⌖','✧'];
+export function createRenderer(canvas){const c=canvas.getContext('2d');let scale=1,ox=0,oy=0,frame=0;function resize(){let d=window.devicePixelRatio||1,w=Math.round(innerWidth*d),h=Math.round(innerHeight*d);canvas.width=w;canvas.height=h;scale=Math.min(w/1280,h/720);ox=(w-1280*scale)/2;oy=(h-720*scale)/2;}window.addEventListener('resize',resize);resize();function txt(t,x,y,size,color=PALETTE.cream,align='left',weight=500){c.font=`${weight} ${size}px ${FONT}`;c.fillStyle=color;c.textAlign=align;c.fillText(t,x,y);}function rr(x,y,w,h,r,color){c.fillStyle=color;c.beginPath();c.roundRect(x,y,w,h,r);c.fill();}
+ function background(s){c.fillStyle=PALETTE.ink;c.fillRect(0,0,1280,720);let g=c.createRadialGradient(640,360,80,640,360,710);g.addColorStop(0,'#1d2d43');g.addColorStop(1,'#0b111d');c.fillStyle=g;c.fillRect(0,0,1280,720);c.strokeStyle='#25364b';c.lineWidth=2;c.strokeRect(24,24,1232,672);c.strokeStyle='#1a293c';c.lineWidth=1;for(let x=60;x<1280;x+=64){c.beginPath();c.moveTo(x,32);c.lineTo(x,688);c.stroke();}for(let y=64;y<720;y+=64){c.beginPath();c.moveTo(32,y);c.lineTo(1248,y);c.stroke();}
+ // lantern pools visibly cast warm light
+ for(const b of s.braziers){let rg=c.createRadialGradient(b.x,b.y,5,b.x,b.y, b.lit?210:25);rg.addColorStop(0,b.lit?'rgba(255,179,87,.26)':'rgba(80,90,110,.06)');rg.addColorStop(1,'rgba(255,145,60,0)');c.fillStyle=rg;c.fillRect(b.x-220,b.y-220,440,440);c.save();c.translate(b.x,b.y);c.fillStyle='#544034';c.beginPath();c.moveTo(-24,18);c.lineTo(-16,-16);c.lineTo(16,-16);c.lineTo(24,18);c.closePath();c.fill();c.fillStyle=b.lit?PALETTE.gold:'#667181';c.shadowColor=b.lit?'#ff8b45':'transparent';c.shadowBlur=b.lit?24:0;c.beginPath();c.ellipse(0,-20,9,16,0,0,Math.PI*2);c.fill();c.shadowBlur=0;if(!b.lit&&b.progress>0){c.strokeStyle=PALETTE.gold;c.lineWidth=3;c.beginPath();c.arc(0,0,30,-Math.PI/2,-Math.PI/2+Math.PI*2*b.progress/2);c.stroke();}c.restore();}}
+ function entity(s){for(const a of s.pickups){c.shadowColor=a.kind==='heart'?'#ff7685':PALETTE.gold;c.shadowBlur=18;c.fillStyle=a.kind==='heart'?'#ff7685':PALETTE.gold;c.beginPath();c.arc(a.x,a.y,a.r,0,7);c.fill();c.shadowBlur=0;if(a.kind==='heart')txt('♥',a.x,a.y+6,15,'#fff', 'center',800);}
+ for(const b of s.enemyBullets){c.fillStyle=b.glob?'#ab83ff':'#c7a6ff';c.shadowColor='#9472f6';c.shadowBlur=12;c.beginPath();c.arc(b.x,b.y,b.r,0,7);c.fill();c.shadowBlur=0;}
+ for(const b of s.bullets){c.fillStyle='#ffe2a1';c.shadowColor='#ff9b49';c.shadowBlur=12;c.beginPath();c.ellipse(b.x,b.y,10,4,Math.atan2(b.vy,b.vx),0,7);c.fill();c.shadowBlur=0;}
+ for(const e of s.enemies){let color=e.kind==='spitter'?'#76bdcf':e.kind==='brute'?'#c18a68':e.kind==='splitter'?'#b97bd3':e.kind==='boss'?'#a48aff':'#827fea';c.save();c.translate(e.x,e.y);c.shadowColor=color;c.shadowBlur=e.boss?30:12;c.fillStyle=color;c.beginPath();let r=e.w/2;c.arc(0,0,r,0,Math.PI*2);c.fill();c.shadowBlur=0;c.fillStyle='#201b35';c.beginPath();c.arc(-r*.26,-2,3,0,7);c.arc(r*.26,-2,3,0,7);c.fill();if(e.boss){c.strokeStyle='#d6caff';c.lineWidth=3;c.beginPath();c.arc(0,0,r+7,0,7);c.stroke();}c.restore();if(e.kind!=='wisp'&&!e.boss){rr(e.x-e.w/2,e.y-e.h/2-11,e.w,4,2,'#111827');rr(e.x-e.w/2,e.y-e.h/2-11,e.w*Math.max(0,e.hp/e.maxHp),4,2,'#e2a786');}}
+ // keeper and lantern
+ const p=s.player;c.save();c.translate(p.x,p.y);c.rotate(p.angle);if(p.iframes>0&&Math.floor(frame/4)%2)c.globalAlpha=.42;c.shadowColor='#ffbd6b';c.shadowBlur=22;c.fillStyle='#e2c49a';c.beginPath();c.arc(0,0,p.radius,0,7);c.fill();c.fillStyle='#513a36';c.fillRect(-7,-9,12,18);c.fillStyle='#ffc66d';c.shadowBlur=18;c.beginPath();c.arc(9,0,7,0,7);c.fill();c.restore();c.shadowBlur=0;
+ for(const a of s.particles){c.globalAlpha=Math.max(0,a.life/a.max);c.fillStyle=a.color;c.beginPath();c.arc(a.x,a.y,a.r,0,7);c.fill();}c.globalAlpha=1;for(const a of s.floaters){c.globalAlpha=Math.min(1,a.life);txt(a.text,a.x,a.y,18,a.color,'center',700);}c.globalAlpha=1;}
+ function hud(s,best){rr(38,38,360,74,14,'rgba(7,13,22,.76)');txt('EMBERKEEP',55,65,13,'#aab8c9','left',800);for(let i=0;i<s.player.maxHp;i++){txt(i<s.player.hp?'♥':'♡',58+i*30,96,22,i<s.player.hp?'#ff7d84':'#536174','left',800);}txt(`SCORE ${String(s.score).padStart(6,'0')}`,425,62,17,PALETTE.cream,'left',750);txt(`BEST ${String(best).padStart(6,'0')}`,425,88,13,'#91a0b4','left',600);txt(`WAVE ${String(Math.min(s.wave,10)).padStart(2,'0')} / 10`,1160,60,18,PALETTE.gold,'right',800);
+ rr(1020,82,180,13,6,'#263349');rr(1020,82,180*Math.max(0,1-s.player.dashCd/2.25),13,6,'#78d4c1');txt(s.player.dashCd>0?`DASH ${s.player.dashCd.toFixed(1)}s`:'DASH READY',1200,116,12,'#a4e6d2','right',700);s.upgrades.forEach((id,i)=>{rr(48+i*38,650,30,30,9,'#26344a');txt(UPGRADE_GLYPHS[id],63+i*38,671,17,PALETTE.gold,'center',800);});txt('WASD MOVE  ·  MOUSE AIM  ·  CLICK / SPACE FIRE  ·  SHIFT / RIGHT CLICK DASH  ·  P PAUSE  ·  M MUTE',640,699,12,'#91a0b4','center',600);
+ if(s.boss){let b=s.boss;rr(370,128,540,22,11,'#26344a');rr(375,133,530*Math.max(0,b.hp/b.maxHp),12,6,'#a58bff');txt(b.kind.toUpperCase(),640,119,16,'#e3d9ff','center',800);}}
+ function panel(title,sub){c.fillStyle='rgba(3,8,16,.70)';c.fillRect(0,0,1280,720);rr(285,190,710,340,28,'rgba(18,29,47,.96)');c.strokeStyle='rgba(255,199,122,.45)';c.lineWidth=2;c.strokeRect(285,190,710,340);txt(title,640,286,52,PALETTE.gold,'center',850);txt(sub,640,344,18,'#c0cada','center',550);}
+ function draw(state,screen,best=0){frame++;c.setTransform(1,0,0,1,0,0);c.fillStyle=PALETTE.ink;c.fillRect(0,0,canvas.width,canvas.height);c.setTransform(scale,0,0,scale,ox,oy);c.save();if(state.shake>0)c.translate(Math.sin(frame*2.1)*state.shake,Math.cos(frame*1.7)*state.shake);background(state);entity(state);hud(state,best);if(state.player.hp<=2){let g=c.createRadialGradient(640,360,260,640,360,690);g.addColorStop(0,'rgba(255,30,54,0)');g.addColorStop(1,'rgba(255,30,54,.26)');c.fillStyle=g;c.fillRect(0,0,1280,720);}c.restore();
+ if(screen===SCREEN_TITLE){panel('EMBERKEEP','LANTERNS OF THE HOLLOW');txt('The dark gathers beyond the last circle of light.',640,382,18,'#d7c7aa','center');txt('PRESS ENTER OR CLICK TO BEGIN',640,453,16,PALETTE.cream,'center',800);txt('A lantern-keeper’s final vigil',640,493,13,'#91a0b4','center');}
+ if(screen===SCREEN_DRAFT){c.fillStyle='rgba(5,9,16,.78)';c.fillRect(0,0,1280,720);txt('THE HOLLOW BREATHES',640,183,34,PALETTE.gold,'center',850);txt('CHOOSE ONE EMBER GIFT',640,218,15,'#bdc8d9','center',700);for(let i=0;i<state.draft.length;i++){let x=266+i*250,d=state.draft[i];rr(x,278,220,250,18,'#18283d');c.strokeStyle='#4d5c70';c.strokeRect(x,278,220,250);txt(`${i+1}`,x+24,316,19,PALETTE.gold,'left',800);txt(UPGRADE_GLYPHS[d],x+110,370,46,PALETTE.gold,'center',800);let upgrade=state.draftInfo?.[i]||state.draft[i];txt(upgrade?.name||'',x+110,421,17,PALETTE.cream,'center',800);txt(upgrade?.desc||'',x+110,458,13,'#b8c5d8','center',600);txt('CLICK TO CLAIM',x+110,500,11,'#95a7bc','center',700);} }
+ if(screen===SCREEN_PAUSED)panel('PAUSED','Press P, Esc, Enter, or click to return');if(screen===SCREEN_OVER){panel('THE LIGHT IS LOST',`Score ${state.score}   ·   Wave ${state.wave}   ·   Best ${best}`);txt('PRESS ENTER OR CLICK TO TRY AGAIN',640,449,16,PALETTE.cream,'center',800);}if(screen===SCREEN_VICTORY){panel('THE HOLLOW ENDURES',`The Maw is gone. Score ${state.score}   ·   ${state.kills} shadows banished   ·   Best ${best}`);txt('TEN WAVES. ONE LAST LIGHT.',640,449,16,PALETTE.cream,'center',800);} }
+ return {draw,resize};}

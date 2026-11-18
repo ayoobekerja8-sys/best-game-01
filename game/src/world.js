@@ -1,124 +1,36 @@
-// The game's rules and state, with no drawing and no browser in it: the player's paddle, the
-// pool of falling blocks and coins, spawning, collisions, score, lives and level. step() advances
-// one fixed step and returns what happened as bit flags, so the caller can react without the
-// world knowing about screens or sound. Nothing here allocates after createWorld returns.
-import { BLOCK, COIN, FIELD, LEVEL, LIVES, PLAYER, POOL_SIZE } from './config.js';
-
-export const KIND_BLOCK = 0;
-export const KIND_COIN = 1;
-
-export const EVENT_HIT = 1;
-export const EVENT_COIN = 2;
-export const EVENT_OVER = 4;
-
-function overlaps(a, b) {
-  return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
-}
-
-export function createWorld(random) {
-  const player = { x: 0, y: FIELD.groundY - PLAYER.height, width: PLAYER.width, height: PLAYER.height, invulnerable: 0 };
-  const items = [];
-  for (let index = 0; index < POOL_SIZE; index += 1) {
-    items.push({ active: false, kind: KIND_BLOCK, x: 0, y: 0, width: 0, height: 0, speed: 0 });
-  }
-  const state = { player, items, score: 0, lives: LIVES, level: 1, elapsed: 0, blockTimer: 0, coinTimer: 0 };
-
-  function reset() {
-    player.x = (FIELD.width - player.width) / 2;
-    player.invulnerable = 0;
-    for (const item of items) item.active = false;
-    state.score = 0;
-    state.lives = LIVES;
-    state.level = 1;
-    state.elapsed = 0;
-    state.blockTimer = BLOCK.interval;
-    state.coinTimer = COIN.interval;
-  }
-
-  function freeItem() {
-    for (let index = 0; index < items.length; index += 1) if (!items[index].active) return items[index];
-    return null;
-  }
-
-  function spawnBlock() {
-    const item = freeItem();
-    if (item === null) return;
-    item.active = true;
-    item.kind = KIND_BLOCK;
-    item.width = BLOCK.minWidth + random() * (BLOCK.maxWidth - BLOCK.minWidth);
-    item.height = BLOCK.height;
-    item.x = random() * (FIELD.width - item.width);
-    item.y = -item.height;
-    item.speed = BLOCK.speed + BLOCK.speedPerLevel * (state.level - 1) + random() * BLOCK.speedJitter;
-  }
-
-  function spawnCoin() {
-    const item = freeItem();
-    if (item === null) return;
-    item.active = true;
-    item.kind = KIND_COIN;
-    item.width = COIN.size;
-    item.height = COIN.size;
-    item.x = random() * (FIELD.width - item.width);
-    item.y = -item.height;
-    item.speed = COIN.speed + COIN.speedPerLevel * (state.level - 1);
-  }
-
-  function blockInterval() {
-    return Math.max(BLOCK.minInterval, BLOCK.interval * BLOCK.intervalScale ** (state.level - 1));
-  }
-
-  /**
-   * One fixed step. `direction` is -1, 0 or 1 (left, still, right). With `harmless` set (the title
-   * screen's backdrop) things fall but nothing touches the player and nothing scores.
-   */
-  function step(dt, direction, harmless) {
-    let events = 0;
-    state.elapsed += dt;
-    state.level = Math.min(LEVEL.max, 1 + Math.floor(state.elapsed / LEVEL.seconds));
-
-    player.x = Math.min(FIELD.width - player.width, Math.max(0, player.x + direction * PLAYER.speed * dt));
-    if (player.invulnerable > 0) player.invulnerable = Math.max(0, player.invulnerable - dt);
-
-    state.blockTimer -= dt;
-    if (state.blockTimer <= 0) {
-      spawnBlock();
-      state.blockTimer += blockInterval();
-    }
-    state.coinTimer -= dt;
-    if (state.coinTimer <= 0) {
-      spawnCoin();
-      state.coinTimer += COIN.interval + random() * COIN.intervalJitter;
-    }
-
-    for (let index = 0; index < items.length; index += 1) {
-      const item = items[index];
-      if (!item.active) continue;
-      item.y += item.speed * dt;
-      if (item.y > FIELD.groundY) {
-        item.active = false;
-        if (item.kind === KIND_BLOCK && !harmless) state.score += BLOCK.dodgePoints;
-        continue;
-      }
-      if (harmless || !overlaps(item, player)) continue;
-      if (item.kind === KIND_COIN) {
-        item.active = false;
-        state.score += COIN.points;
-        events |= EVENT_COIN;
-      } else if (player.invulnerable === 0) {
-        item.active = false;
-        state.lives -= 1;
-        player.invulnerable = PLAYER.invulnerable;
-        events |= EVENT_HIT;
-        if (state.lives === 0) {
-          events |= EVENT_OVER;
-          break;
-        }
-      }
-    }
-    return events;
-  }
-
-  reset();
-  return { state, reset, step };
+import {FIELD,PLAYER,TUNE,WAVES} from './config.js';
+export const EVENT_HIT=1,EVENT_OVER=2,EVENT_CLEAR=4,EVENT_BOSS=8,EVENT_WIN=16;
+const UPGRADES=[['Cinderheart','Damage +25%'],['Quickwick','Fire 20% faster'],['Forked flame','Fire one extra bolt'],['Piercer','Bolts pierce once'],['Fleetfoot','Move 12% faster'],['Second chance','+1 heart, heal 1'],['Long stride','Dash recharges faster'],['Kindling burst','Kills spark nearby foes'],['Hollow pull','Larger pickup magnet'],['Thornlight','Contact hurts enemies']];
+const kinds=['wisp','spitter','brute','splitter'];
+function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y);}
+export function createWorld(random){
+ const s={player:{x:640,y:390,hp:6,maxHp:6,radius:PLAYER.radius,iframes:0,dash:0,dashCd:0,fireCd:0,angle:0},enemies:[],bullets:[],enemyBullets:[],pickups:[],particles:[],floaters:[],braziers:[],wave:1,waveRemain:8,score:0,kills:0,elapsed:0,spawn:0,waveWait:0,boss:null,upgrades:[],draft:[],draftSeed:0,shake:0,hitstop:0,won:false};
+ function reset(){Object.assign(s,{enemies:[],bullets:[],enemyBullets:[],pickups:[],particles:[],floaters:[],braziers:[],wave:1,waveRemain:8,score:0,kills:0,elapsed:0,spawn:0,waveWait:0,boss:null,upgrades:[],draft:[],shake:0,hitstop:0,won:false});Object.assign(s.player,{x:640,y:390,hp:6,maxHp:6,radius:PLAYER.radius,iframes:0,dash:0,dashCd:0,fireCd:0,angle:0});for(const [x,y] of [[92,92],[1188,92],[92,628],[1188,628]])s.braziers.push({x,y,lit:true,progress:0,heal:0});}
+ function particle(x,y,color,n=8){for(let i=0;i<n&&s.particles.length<TUNE.particleCap;i++){const a=random()*Math.PI*2,v=35+random()*210;s.particles.push({x,y,vx:Math.cos(a)*v,vy:Math.sin(a)*v,life:.25+random()*.65,max:.9,color,r:1+random()*4});}}
+ function floater(x,y,text,color='#ffc66d'){s.floaters.push({x,y,text,life:1,color});}
+ function spawn(kind){if(s.enemies.length>=TUNE.enemyCap)return;let side=Math.floor(random()*4),x=side===0?-30:side===1?1310:random()*1280,y=side===2?-30:side===3?750:random()*720;const data={wisp:[26,30,1,90,1],spitter:[31,35,3,50,2],brute:[48,54,10,25,3],splitter:[37,40,4,47,2]};let [w,h,hp,speed,damage]=data[kind];s.waveRemain=Math.max(0,s.waveRemain-1);s.enemies.push({kind,x,y,w,h,hp,maxHp:hp,wave:s.wave,fire:1+random()*1.4,contact:0,speed:speed*(1+s.wave*.035),damage});}
+ function spawnBoss(){const maw=s.wave===10;s.boss={kind:maw?'Hollow Maw':'Gloom Warden',x:640,y:145,hp:maw?650:570,maxHp:maw?650:570,phase:0,clock:0,fire:.9,r:maw?72:57};s.enemies.push({kind:'boss',boss:true,x:640,y:145,w:s.boss.r*2,h:s.boss.r*2,hp:s.boss.hp,maxHp:s.boss.maxHp,speed:0,damage:2,fire:0});}
+ function bossBullets(b){const count=s.wave===10?11:9;for(let i=0;i<count;i++){const a=(Math.PI*2*i/count)+s.boss.clock*.55;s.enemyBullets.push({x:b.x,y:b.y,vx:Math.cos(a)*(s.wave===10?155:125),vy:Math.sin(a)*(s.wave===10?155:125),r:8,damage:1});}if(s.wave===10){for(let i=0;i<4;i++){const a=Math.atan2(s.player.y-b.y,s.player.x-b.x)+(i-1.5)*.18;s.enemyBullets.push({x:b.x,y:b.y,vx:Math.cos(a)*240,vy:Math.sin(a)*240,r:9,damage:1});}}}
+ function attack(){const p=s.player;const count=1+(s.upgrades.includes(2)?1:0);for(let i=0;i<count;i++){let a=p.angle+(i-(count-1)/2)*.16;s.bullets.push({x:p.x+Math.cos(a)*22,y:p.y+Math.sin(a)*22,vx:Math.cos(a)*PLAYER.boltSpeed,vy:Math.sin(a)*PLAYER.boltSpeed,r:6,damage:s.upgrades.includes(0)?1.25:1,pierce:s.upgrades.includes(3)?1:0});}p.fireCd=PLAYER.fireRate*(s.upgrades.includes(1)?.8:1);}
+ function hitPlayer(dmg){let p=s.player;if(p.iframes>0||p.dash>0)return false;p.hp-=dmg;p.iframes=1.15;s.shake=12;particle(p.x,p.y,'#ff6877',18);return true;}
+ function kill(e){s.kills++;const pts=e.boss?5000:e.kind==='brute'?140: e.kind==='spitter'?90:60;s.score+=pts;floater(e.x,e.y,`+${pts}`);particle(e.x,e.y,e.boss?'#b999ff':'#8e81ff',e.boss?55:17);if(e.kind==='splitter')for(let i=0;i<2;i++)spawn('wisp');if(s.upgrades.includes(7))for(const o of s.enemies)if(o!==e&&dist(o,e)<125)o.hp-=1;if(random()<.2)s.pickups.push({kind:'ember',x:e.x,y:e.y,r:10});if(!e.boss&&random()<.028)s.pickups.push({kind:'heart',x:e.x,y:e.y,r:12});if(e.boss){s.boss=null;if(s.wave===10){s.won=true;return;}s.waveWait=2.6;}}
+ function advanceWave(){s.score+=s.wave*220;if(s.player.hp<s.player.maxHp)s.player.hp++;floater(640,300,`WAVE ${s.wave} CLEARED`,'#ffe6b3');s.waveWait=1.4;if(s.wave===4||s.wave===9){s.wave++;spawnBoss();return;}if(s.wave>=WAVES){s.won=true;return;}s.wave++;s.waveRemain=6+s.wave*2;s.draft=pickDraft();}
+ function pickDraft(){let bag=UPGRADES.map((_,i)=>i).filter(i=>!(i===2&&s.upgrades.includes(2)));let result=[];while(result.length<3&&bag.length){let i=Math.floor(random()*bag.length);result.push(bag.splice(i,1)[0]);}return result;}
+ function chooseUpgrade(i){let id=s.draft[i];if(id===undefined)return false;s.upgrades.push(id);if(id===5){s.player.maxHp++;s.player.hp=Math.min(s.player.maxHp,s.player.hp+1);}s.draft=[];s.waveWait=1.4;return true;}
+ function step(dt,ctrl={},harmless=false){if(s.hitstop>0){s.hitstop=Math.max(0,s.hitstop-dt);return 0;}s.elapsed+=dt;let events=0;const p=s.player;for(const b of s.braziers){if(dist(p,b)<64){if(!b.lit){b.progress+=dt;if(b.progress>=2){b.lit=true;b.progress=0;}}else{b.heal+=dt;if(b.heal>=14&&p.hp<p.maxHp){p.hp++;b.heal=0;}}}else if(!b.lit)b.progress=Math.max(0,b.progress-dt*.3);}
+ if(!harmless){p.angle=Math.atan2((ctrl.aim?.y??p.y)-p.y,(ctrl.aim?.x??p.x)-p.x);if(ctrl.dash&&p.dashCd<=0){p.dash=.17;p.dashCd=PLAYER.dashCooldown*(s.upgrades.includes(6)?.7:1);p.iframes=Math.max(p.iframes,.25);}if(p.dash>0)p.dash=Math.max(0,p.dash-dt);p.dashCd=Math.max(0,p.dashCd-dt);p.iframes=Math.max(0,p.iframes-dt);p.fireCd-=dt;let dx=ctrl.x||0,dy=ctrl.y||0;if(dx||dy){let m=Math.hypot(dx,dy),speed=PLAYER.speed*(s.upgrades.includes(4)?1.12:1);if(p.dash>0)speed=PLAYER.dashSpeed;p.x=Math.max(18,Math.min(1262,p.x+dx/m*speed*dt));p.y=Math.max(18,Math.min(702,p.y+dy/m*speed*dt));}if(ctrl.fire&&p.fireCd<=0){attack();events|=0;}
+ }
+ if(s.boss){s.boss.clock+=dt;s.boss.phase=s.boss.hp/s.boss.maxHp<.5?1:0;s.boss.x=640+Math.sin(s.boss.clock*.58)*350;s.boss.y=145+Math.sin(s.boss.clock*.93)*42;s.boss.fire-=dt;if(s.boss.fire<=0){bossBullets(s.boss);s.boss.fire=s.boss.phase?.9:1.35;}}
+ else if(!s.draft.length){s.spawn-=dt;if(s.spawn<=0&&s.wave<=WAVES&&s.waveRemain>0){let type=kinds[Math.floor(random()*Math.min(2+Math.floor(s.wave/2),4))];spawn(type);s.spawn=TUNE.spawnGap*Math.max(.34,1-s.wave*.052);}}
+ for(let i=s.enemies.length-1;i>=0;i--){let e=s.enemies[i];if(e.boss){e.x=s.boss?.x??e.x;e.y=s.boss?.y??e.y;e.hp=s.boss?.hp??0;if(!s.boss){s.enemies.splice(i,1);continue;}}
+ else {let dx=p.x-e.x,dy=p.y-e.y,d=Math.max(1,Math.hypot(dx,dy)),want=1;if(e.kind==='spitter'&&d<270)want=-.7;if(e.kind==='spitter'&&d>=270&&d<365)want=0;e.x=Math.max(25,Math.min(1255,e.x+dx/d*e.speed*want*dt));e.y=Math.max(55,Math.min(665,e.y+dy/d*e.speed*want*dt));if(e.kind==='spitter'){e.fire-=dt;if(e.fire<=0){s.enemyBullets.push({x:e.x,y:e.y,vx:dx/d*145,vy:dy/d*145,r:9,damage:1,glob:true});e.fire=2.1+random();}}if(!harmless&&d<e.w/2+p.radius&&e.contact<=0){if(hitPlayer(e.damage))events|=EVENT_HIT;e.contact=.8;}e.contact=Math.max(0,e.contact-dt);}
+ }
+ for(let i=s.bullets.length-1;i>=0;i--){let b=s.bullets[i];b.x+=b.vx*dt;b.y+=b.vy*dt;if(b.x<0||b.x>1280||b.y<0||b.y>720){s.bullets.splice(i,1);continue;}for(let j=s.enemies.length-1;j>=0;j--){let e=s.enemies[j];if(Math.hypot(b.x-e.x,b.y-e.y)<(e.w/2+b.r)){e.hp-=b.damage;particle(b.x,b.y,'#ffbd68',3);s.shake=e.boss?5:1;if(e.boss){s.boss.hp=e.hp;s.hitstop=.025;}if(b.pierce)b.pierce--;else s.bullets.splice(i,1);if(e.hp<=0){kill(e);s.enemies.splice(j,1);if(e.boss){events|=EVENT_BOSS;if(s.wave===10){events|=EVENT_WIN;}}}break;}}}
+ for(let i=s.enemyBullets.length-1;i>=0;i--){let b=s.enemyBullets[i];b.x+=b.vx*dt;b.y+=b.vy*dt;if(b.x< -20||b.x>1300||b.y< -20||b.y>740){s.enemyBullets.splice(i,1);continue;}if(Math.hypot(b.x-p.x,b.y-p.y)<b.r+p.radius&&!harmless){if(hitPlayer(b.damage))events|=EVENT_HIT;s.enemyBullets.splice(i,1);}if(b.glob){for(const z of s.braziers)if(z.lit&&dist(b,z)<b.r+20){z.lit=false;z.progress=0;s.enemyBullets.splice(i,1);break;}}}
+ for(let i=s.pickups.length-1;i>=0;i--){let a=s.pickups[i],mag=120+(s.upgrades.includes(8)?95:0),d=dist(a,p);if(d<mag){a.x+=(p.x-a.x)*dt*3.5;a.y+=(p.y-a.y)*dt*3.5;}if(d<p.radius+a.r+6){if(a.kind==='heart')p.hp=Math.min(p.maxHp,p.hp+1);else s.score+=125;floater(a.x,a.y,a.kind==='heart'?'+ HEART':'+125');s.pickups.splice(i,1);}}
+ for(let i=s.particles.length-1;i>=0;i--){let a=s.particles[i];a.x+=a.vx*dt;a.y+=a.vy*dt;a.vx*=.975;a.vy*=.975;a.life-=dt;if(a.life<=0)s.particles.splice(i,1);}for(let i=s.floaters.length-1;i>=0;i--){let a=s.floaters[i];a.y-=28*dt;a.life-=dt;if(a.life<=0)s.floaters.splice(i,1);}s.shake=Math.max(0,s.shake-dt*28);
+ if(!harmless&&!s.boss&&!s.draft.length){if(s.waveWait>0)s.waveWait-=dt;else if(s.enemies.length===0&&s.waveRemain===0){advanceWave();events|=EVENT_CLEAR;}}
+ if(!harmless&&p.hp<=0)events|=EVENT_OVER;return events;}
+ function getDraft(){return s.draft.map(i=>({name:UPGRADES[i][0],desc:UPGRADES[i][1],glyph:i}));}
+ reset();return {state:s,reset,step,chooseUpgrade,getDraft,spawnBoss};
 }

@@ -1,53 +1,10 @@
-// Keyboard and pointer input. Held keys give a steering direction; one-shot presses (start or
-// restart, pause) are queued as bit flags and taken once by the loop, so a press between two
-// frames is never lost and never counted twice.
-
-export const ACTION_CONFIRM = 1;
-export const ACTION_PAUSE = 2;
-
-const LEFT = new Set(['ArrowLeft', 'KeyA']);
-const RIGHT = new Set(['ArrowRight', 'KeyD']);
-const CONFIRM = new Set(['Space', 'Enter']);
-const PAUSE = new Set(['KeyP', 'Escape']);
-
-export function createInput(target) {
-  let left = false;
-  let right = false;
-  let actions = 0;
-
-  window.addEventListener('keydown', (event) => {
-    if (LEFT.has(event.code)) left = true;
-    else if (RIGHT.has(event.code)) right = true;
-    else if (CONFIRM.has(event.code)) {
-      if (!event.repeat) actions |= ACTION_CONFIRM;
-    } else if (PAUSE.has(event.code)) {
-      if (!event.repeat) actions |= ACTION_PAUSE;
-    } else return;
-    event.preventDefault();
-  });
-  window.addEventListener('keyup', (event) => {
-    if (LEFT.has(event.code)) left = false;
-    else if (RIGHT.has(event.code)) right = false;
-  });
-  // A key released while the tab is hidden never sends keyup: let go of everything on blur.
-  window.addEventListener('blur', () => {
-    left = false;
-    right = false;
-  });
-  target.addEventListener('pointerdown', () => {
-    actions |= ACTION_CONFIRM;
-  });
-
-  return {
-    /** -1 for left, 1 for right, 0 for neither or both. */
-    direction() {
-      return (right ? 1 : 0) - (left ? 1 : 0);
-    },
-    /** The one-shot presses since the last call, as ACTION_* flags. */
-    takeActions() {
-      const taken = actions;
-      actions = 0;
-      return taken;
-    },
-  };
+export const ACTION_CONFIRM=1,ACTION_PAUSE=2,ACTION_MUTE=4;
+export function createInput(canvas){
+ const held=new Set(); let actions=0,mouse={x:640,y:360},fire=false,dash=false,choice=-1;
+ const map={KeyW:'up',ArrowUp:'up',KeyS:'down',ArrowDown:'down',KeyA:'left',ArrowLeft:'left',KeyD:'right',ArrowRight:'right'};
+ window.addEventListener('keydown',e=>{if(map[e.code])held.add(map[e.code]);else if(e.code==='Space'){fire=true;actions|=ACTION_CONFIRM;}else if(e.code==='Enter'){actions|=ACTION_CONFIRM;}else if(e.code==='ShiftLeft'||e.code==='ShiftRight'){dash=true;}else if(e.code==='Escape'||e.code==='KeyP')actions|=ACTION_PAUSE;else if(e.code==='KeyM')actions|=ACTION_MUTE;else if(/^Digit[123]$/.test(e.code)){choice=Number(e.code.slice(-1))-1;actions|=ACTION_CONFIRM;}else return;e.preventDefault();});
+ window.addEventListener('keyup',e=>{if(map[e.code])held.delete(map[e.code]);if(e.code==='Space')fire=false;if(e.code==='ShiftLeft'||e.code==='ShiftRight')dash=false;});
+ const point=e=>{const r=canvas.getBoundingClientRect();mouse.x=(e.clientX-r.left)*1280/r.width;mouse.y=(e.clientY-r.top)*720/r.height;};
+ canvas.addEventListener('pointermove',point);canvas.addEventListener('pointerdown',e=>{point(e);if(e.button===2)dash=true;else {fire=true;choice=-1;actions|=ACTION_CONFIRM;}});window.addEventListener('pointerup',e=>{if(e.button===2)dash=false;else fire=false;});canvas.addEventListener('contextmenu',e=>e.preventDefault());window.addEventListener('blur',()=>{held.clear();fire=false;dash=false;});
+ return {read(){let x=(held.has('right')?1:0)-(held.has('left')?1:0),y=(held.has('down')?1:0)-(held.has('up')?1:0);if(x&&y){x*=.7071;y*=.7071;}return {x,y,aim:{...mouse},fire,dash,actions:take()};},takeActions:take,takeChoice(){let c=choice;choice=-1;return c;}};function take(){let a=actions;actions=0;return a;}
 }
